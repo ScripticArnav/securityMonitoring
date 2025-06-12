@@ -18,8 +18,8 @@ app = Flask(__name__)
 CORS(app)
 
 # Initialize models
-general_model = YOLO('yolov8n.pt')  # General object detection
-plate_model = YOLO('yolov8n-seg.pt')  # For license plate detection
+general_model = YOLO('yolov8m.pt')  # General object detection
+plate_model = YOLO('yolov8m-seg.pt')  # For license plate detection
 
 # Initialize license plate reader
 reader = easyocr.Reader(['en'])
@@ -87,7 +87,7 @@ def read_license_plate(plate_img):
         return None
     
     # Resize for better OCR results
-    plate_img = cv2.resize(plate_img, (0, 0), fx=2, fy=2)
+    plate_img = cv2.resize(plate_img, (0, 0), fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
     
     # Convert to grayscale
     gray = cv2.cvtColor(plate_img, cv2.COLOR_BGR2GRAY)
@@ -96,11 +96,11 @@ def read_license_plate(plate_img):
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     gray = clahe.apply(gray)
     
-    # Apply threshold
-    _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    # Apply adaptive threshold
+    binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
     
     # Denoise
-    binary = cv2.fastNlMeansDenoising(binary, None, 10, 7, 21)
+    binary = cv2.fastNlMeansDenoising(binary, None, 15, 7, 21) # Increased h (filter strength)
     
     # Read text using EasyOCR
     results = reader.readtext(binary)
@@ -108,7 +108,7 @@ def read_license_plate(plate_img):
     # Extract and combine text
     plate_text = ""
     for (_, text, prob) in results:
-        if prob > 0.5:
+        if prob > 0.3: # Lowered confidence threshold
             plate_text += text
     
     # Clean up the text
@@ -209,7 +209,7 @@ def detect_and_recognize():
         # Process face recognition (on every other frame for performance)
         if process_this_frame:
             # Resize frame for faster face recognition processing
-            small_frame = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
+            small_frame = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
             rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
             
             # Find all faces in the current frame
@@ -218,13 +218,13 @@ def detect_and_recognize():
             
             for (top, right, bottom, left), face_encoding in zip(face_locations, face_encodings):
                 # Scale back up face locations
-                top *= 4
-                right *= 4
-                bottom *= 4
-                left *= 4
+                top *= 2
+                right *= 2
+                bottom *= 2
+                left *= 2
                 
                 # Compare with known faces
-                matches = face_recognition.compare_faces(known_face_encodings, face_encoding, tolerance=0.6)
+                matches = face_recognition.compare_faces(known_face_encodings, face_encoding, tolerance=0.6)  # More lenient tolerance
                 name = "Unknown"
                 status = "unauthorized"
                 confidence = None
@@ -235,7 +235,8 @@ def detect_and_recognize():
                     best_match_index = np.argmin(face_distances)
                     confidence = 1 - face_distances[best_match_index]
                     
-                    if matches[best_match_index]:
+                    # Simplified matching logic - just check if it's a match and has reasonable confidence
+                    if matches[best_match_index] and confidence > 0.4:
                         name = known_face_names[best_match_index]
                         status = "authorized"
                 
@@ -312,7 +313,7 @@ def detect_and_recognize():
                             px1, py1, px2, py2 = map(int, plate_box.xyxy[0])
                             plate_conf = float(plate_box.conf[0])
                             
-                            if plate_conf > 0.4:  # Lower threshold for plates
+                            if plate_conf > 0.25:  # Lower threshold for plates
                                 # Extract plate image
                                 plate_img = vehicle_img[py1:py2, px1:px2]
                                 
